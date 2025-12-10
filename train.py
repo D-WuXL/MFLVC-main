@@ -21,7 +21,7 @@ from scipy.optimize import linear_sum_assignment
 # Caltech-3V
 # Caltech-4V
 # Caltech-5V
-Dataname = 'MNIST-USPS'
+Dataname = 'Fashion-TTAE'
 parser = argparse.ArgumentParser(description='train')
 parser.add_argument('--dataset', default=Dataname)
 parser.add_argument('--batch_size', default=256, type=int)
@@ -64,6 +64,11 @@ if args.dataset == "Caltech-4V":
 if args.dataset == "Caltech-5V":
     args.con_epochs = 50
     seed = 5
+# --- 新增這段 ---
+if args.dataset == "Fashion-TTAE":
+    args.con_epochs = 50
+    seed = 10
+# ----------------
 
 
 def setup_seed(seed):

@@ -158,6 +158,102 @@ def load_data(dataset):
         view = 5
         data_size = 1400
         class_num = 7
+    # --- 新增這段配置 ---
+    elif dataset == "Fashion-TTAE":
+        dataset = FashionTTAE('./data/', sample_size=2000)
+        dims = [784, 784]  # 兩個視圖都是 784 維向量
+        view = 2  # 只有 2 個視圖
+        data_size = 2000  # 樣本數
+        class_num = 10
+    # ------------------
     else:
         raise NotImplementedError
     return dataset, dims, view, data_size, class_num
+
+
+#————————————————————————————————————————————
+#按照TTAE论文要求进行改变
+#————————————————————————————————————————————
+import scipy.io
+import scipy.ndimage
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+from sklearn.preprocessing import MinMaxScaler
+
+
+class FashionTTAE(Dataset):
+    def __init__(self, path, sample_size=2000):
+        """
+        Fashion-MNIST TTAE版数据集 (适配 MLP 全连接网络)
+        View 1: 原始数据 (拉平为 784 维)
+        View 2: 边缘特征 (拉平为 784 维)
+        """
+        # 1. 加载原始数据
+        data = scipy.io.loadmat(path + 'Fashion.mat')
+
+        full_x = data['X1'].astype(np.float32)
+        full_y = data['Y'].astype(np.int32).reshape(-1)
+
+        # 2. 随机采样 2000 个样本
+        np.random.seed(10)
+        total_samples = full_x.shape[0]
+        if sample_size > total_samples:
+            sample_size = total_samples
+        indices = np.random.choice(total_samples, sample_size, replace=False)
+
+        x_sampled = full_x[indices]
+        self.y = full_y[indices]
+
+        # 3. 【核心修正】强制拉平为 2维 [N, 784]
+        # 无论原始数据是图片还是向量，统统拉平成 (N, 784)
+        if x_sampled.ndim > 2:
+            x_sampled = x_sampled.reshape(x_sampled.shape[0], -1)
+
+        # 确保是 784 维
+        if x_sampled.shape[1] != 784:
+            # 如果不是 784，尝试强制 reshape (前提是总像素数对得上)
+            try:
+                x_sampled = x_sampled.reshape(x_sampled.shape[0], 784)
+            except ValueError:
+                print(f"警告: 数据维度异常 {x_sampled.shape}, 无法 Reshape 为 784")
+
+        # 4. 构造视图
+        self.v1 = x_sampled
+        # 生成边缘特征 (函数内部会处理图片转换，最后返回拉平的向量)
+        self.v2 = self._generate_edge_view(x_sampled)
+
+        # 5. 归一化 (MLP 版本推荐使用 MinMaxScaler)
+        scaler = MinMaxScaler()
+        self.v1 = scaler.fit_transform(self.v1)
+        self.v2 = scaler.fit_transform(self.v2)
+
+    def _generate_edge_view(self, x_vecs):
+        """
+        输入: x_vecs [N, 784]
+        输出: edge_vecs [N, 784]
+        """
+        edge_data = []
+        N = x_vecs.shape[0]
+        for i in range(N):
+            # 1. 还原为图片以提取边缘
+            img = x_vecs[i].reshape(28, 28)
+
+            # 2. Sobel 边缘提取
+            sx = scipy.ndimage.sobel(img, axis=0, mode='constant')
+            sy = scipy.ndimage.sobel(img, axis=1, mode='constant')
+            edge_img = np.hypot(sx, sy)
+
+            # 3. 【关键】提取完边缘后，再次拉平回向量
+            edge_data.append(edge_img.reshape(-1))
+
+        return np.array(edge_data, dtype=np.float32)
+
+    def __len__(self):
+        return self.v1.shape[0]
+
+    def __getitem__(self, idx):
+        # 返回: [View1, View2]
+        # 此时形状都是 [784]，符合 Linear 层的输入要求
+        return [torch.from_numpy(self.v1[idx]), torch.from_numpy(self.v2[idx])], \
+            self.y[idx], torch.from_numpy(np.array(idx)).long()
